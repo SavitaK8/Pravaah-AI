@@ -1,0 +1,47 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pravaah AI</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>body{margin:0;font-family:system-ui,sans-serif;display:grid;grid-template-columns:1fr 340px;height:100vh}
+#map{height:100vh;background:#eef3f8}aside{padding:14px;overflow:auto;background:#f7f9fc}
+.card{background:#fff;border-radius:8px;padding:10px;margin:8px 0;border-left:5px solid #888;font-size:14px}
+.high{border-color:#d94141}.moderate{border-color:#f0b400}.low{border-color:#2e9e5b}
+button,select{padding:5px 8px;margin:2px}h3{margin:6px 0}</style></head><body>
+<div id="map"></div><aside id="root"></aside>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script type="text/babel">
+const {useState,useEffect,useRef}=React;
+const COL={low:"#2e9e5b",moderate:"#f0b400",high:"#d94141"};
+const ll=([x,y])=>[y,x];
+function App(){
+  const [data,setData]=useState(null),[venue,setVenue]=useState(null),[src,setSrc]=useState("Parking 1"),[dst,setDst]=useState("Zone 1"),[rt,setRt]=useState(null);
+  const map=useRef(),layer=useRef();
+  useEffect(()=>{
+    map.current=L.map("map",{crs:L.CRS.Simple,minZoom:0,zoomSnap:.25,attributionControl:false});
+    map.current.fitBounds([[0,0],[100,100]]);layer.current=L.layerGroup().addTo(map.current);
+    fetch("/api/venue").then(r=>r.json()).then(setVenue);
+    const ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
+    ws.onmessage=e=>setData(JSON.parse(e.data));return()=>ws.close();
+  },[]);
+  useEffect(()=>{ if(!data||!venue)return; const g=layer.current;g.clearLayers();
+    venue.edges.forEach(([a,b])=>L.polyline([ll(venue.zones[a]),ll(venue.zones[b])],{color:"#b8c2cc",weight:3}).addTo(g));
+    if(rt&&rt.path.length)L.polyline(rt.path.map(z=>ll(venue.zones[z])),{color:"#1565c0",weight:6,dashArray:"8 6"}).addTo(g);
+    Object.entries(data.zones).forEach(([z,s])=>{
+      L.circle(ll(s.xy),{radius:6+s.density*14,color:COL[s.level],fillColor:COL[s.level],fillOpacity:.35,weight:1}).addTo(g);
+      L.circleMarker(ll(s.xy),{radius:7,color:"#123",fillColor:COL[s.level],fillOpacity:1}).bindTooltip(`${z}: ${s.density} → ${s.forecast.at(-1)}`,{permanent:true,direction:"bottom"}).addTo(g);});
+  },[data,venue,rt]);
+  const find=()=>fetch(`/api/route?src=${encodeURIComponent(src)}&dst=${encodeURIComponent(dst)}`).then(r=>r.json()).then(setRt);
+  useEffect(()=>{if(rt)find()},[data&&data.t]);
+  const names=venue?Object.keys(venue.zones):[];
+  return <div><h3>Pravaah AI — Authority Dashboard</h3><small>{data?.mode} · {data?.predictor} · tick {data?.t}</small>
+    <h3>Alerts</h3>{data?.alerts.length?data.alerts.map(a=><div key={a.id} className={"card "+a.level}><b>{a.level.toUpperCase()}</b> {a.msg}<br/><i>{a.suggestion}</i><br/>
+      <button disabled={a.approved} onClick={()=>fetch(`/api/alerts/${a.id}/approve`,{method:"POST"})}>{a.approved?"Approved":"Approve"}</button></div>):<div className="card low">All zones normal</div>}
+    <h3>Attendee route</h3>
+    <select value={src} onChange={e=>setSrc(e.target.value)}>{names.map(n=><option key={n}>{n}</option>)}</select>→
+    <select value={dst} onChange={e=>setDst(e.target.value)}>{names.map(n=><option key={n}>{n}</option>)}</select><button onClick={find}>Route</button>
+    {rt&&<div className="card low">{rt.path.join(" → ")||"No route"}<br/>cost {rt.cost}{rt.avoided.length>0&&<><br/>avoiding: {rt.avoided.join(", ")}</>}</div>}
+  </div>}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script></body></html>
